@@ -16,4 +16,4 @@ TBA
 
 ## Contribution
 
-TBA
+The project is under construction, however if you have any questions or suggestions feel free either to create an issue or a pull request. 
