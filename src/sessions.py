@@ -2,6 +2,7 @@ from typing import Any
 import os
 import secrets
 import hashlib
+
 from .constants import (
     DEFAULT_HKDF_SALT,
     DEFAULT_HKDF_SYMMETRIC_KEY_LENGTH,
@@ -53,9 +54,7 @@ class BaseSession:
         derives a symmetric key using HKDF
         """
         hkdf = HKDF(
-            algorithm=hashes.SHA256(),
-            length=key_length,
-            salt=key_salt,
+            algorithm=hashes.SHA256(), length=key_length, salt=key_salt, info=None
         )
         return hkdf.derive(shared_key)
 
@@ -67,7 +66,7 @@ class BaseSession:
         """
         aes_gcm = AESGCM(key)
         nonce = os.urandom(nonce_size)
-        ciphertext: "bytes" = aes_gcm.encrypt(nonce, plaintext)
+        ciphertext: "bytes" = aes_gcm.encrypt(nonce, plaintext, associated_data=None)
 
         return {
             "ciphertext": ciphertext.hex(),
@@ -86,7 +85,7 @@ class BaseSession:
         nonce = bytes.fromhex(encrypted_data["nonce"])
         ciphertext = bytes.fromhex(encrypted_data["ciphertext"])
 
-        return aesgcm.decrypt(nonce, ciphertext)
+        return aesgcm.decrypt(nonce, ciphertext, associated_data=None)
 
     def key_exchange(
         self,
@@ -110,56 +109,70 @@ class ReceiverSession(BaseSession):
     using a universally random secret key
     """
 
-    def __init__(
-        self, choice: "int", secret_key_len=DEFAULT_RANDOM_SECRET_KEY_LENGTH
-    ) -> "None":
-        self.choice = int(choice)
+    def __init__(self, secret_key_len=DEFAULT_RANDOM_SECRET_KEY_LENGTH) -> "None":
         self.receiver_key = self.generate_private_key()
         self.secret_key = secrets.token_bytes(secret_key_len)
-        self.choice_sha = hashlib.sha256(
-            self.secret_key + bytes([self.choice])
-        ).digest()
         self.public_key_bytes = self.receiver_key.public_key().public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
 
-    def _get_r0_r1(self, encrypted_data: "dict[str, Any]") -> "tuple[bytes, bytes]":
+    def get_choice_sha(self, choice: "int") -> "bytes":
+        return hashlib.sha256(self.secret_key + bytes([choice])).digest()
+
+    def _get_r(self, enc: "str") -> "bytes":
         """
         retrieve the random values used during encryption
         """
 
-        return (
-            bytes.fromhex(encrypted_data["r0"]),
-            bytes.fromhex(encrypted_data["r1"]),
-        )
+        return bytes.fromhex(enc)
 
-    def get_public_data(self) -> "dict[str, str]":
+    def get_public_data(self, choice: "int") -> "dict[str, str]":
         """
         returns pub key and the choice digest
         """
         return {
             "public_key": self.public_key_bytes.decode(),
-            "choice_commitment": self.choice_sha.hex(),
+            "choice_sha": self.get_choice_sha(choice).hex(),
         }
 
-    def get_salt(self, r: "str") -> "bytes":
-        return hashlib.sha256(self.choice_sha + r).digest()
+    def get_salt(self, r: "str", choice: "int") -> "bytes":
+        """
+        generates the salt used for choice
+        """
+        return hashlib.sha256(self.get_choice_sha(choice) + r).digest()
 
-    def receive_message(self, encrypted_data: "dict[str | Any]") -> "str":
+    def select_message(
+        self, messages: "list[dict[str, str]]", choice: "int"
+    ) -> "dict[str, str]":
+        """
+        selects the message from a list of given msg structures
+        """
+        try:
+            return [m for m in messages if m["mid"] == f"m{choice}"][0]
+        except IndexError:
+            return {}
+
+    def receive_message(
+        self, encrypted_data: "dict[str | Any]", choice: "int"
+    ) -> "bytes":
         """
         decrypts the chosen message, after loading the public key,
         exchanging the shared secret and decide which message will
         be decrypted.
         """
         sender_public_key = self.load_public_key(encrypted_data["sender_public_key"])
-        r0, r1 = self._get_r0_r1(encrypted_data)
+
+        m_dict = self.select_message(encrypted_data["messages"], choice)
+
+        if not m_dict:
+            return ""
+
+        r = self._get_r(m_dict["r"])
+        enc = m_dict["msg"]
 
         shared_secret = self.key_exchange(self.receiver_key, sender_public_key)
-
-        r = r0 if self.choice == 0 else r1
-        enc = encrypted_data["enc0"] if self.choice == 0 else encrypted_data["enc1"]
-        salt = self.get_salt(r)
+        salt = self.get_salt(r, choice)
         key = self.derive_key(shared_key=shared_secret, key_salt=salt)
 
         return self.decrypt(key, enc)
@@ -189,31 +202,33 @@ class SenderSession(BaseSession):
 
     def _encrypt_messages(
         self, shared_secret: "str", choice_sha: "str", secret_key_len: "int"
-    ) -> "dict[str, Any]":
-        res_dict = {}
+    ) -> "list[dict[str, str]]":
+        """
+        encrypts every message and returns a list of dict matching
+        each message with a random hex r.
+        """
+        res_list = []
         messages_list = self.get_messages_list(secret_key_len)
 
         for i, m in enumerate(messages_list):
             message, r = m
             salt = hashlib.sha256(choice_sha + r).digest()
             key = self.derive_key(shared_key=shared_secret, key_salt=salt)
-            enc = self.encrypt(key, message)
-            res_dict[f"r{i}"] = r.hex()
-            res_dict[f"enc{i}"] = enc
+            enc = self.encrypt(key, message.encode("utf-8"))
+            res_list.append({"mid": f"m{i}", "msg": enc, "r": r.hex()})
 
-        return res_dict
+        return res_list
 
     def send(
         self,
-        receiver_data: "dict[str, Any]",
+        receiver_data: "dict[str, str]",
         secret_key_len=DEFAULT_RANDOM_SECRET_KEY_LENGTH,
     ) -> "dict[str, Any]":
         """
         prepares all messages according to the OT protocol
         """
-        receiver_public_key = self.load_public_key(
-            serialization.load_pem_public_key(receiver_data["public_key"])
-        )
+        res_dict = {}
+        receiver_public_key = self.load_public_key(receiver_data["public_key"])
         choice_sha = bytes.fromhex(receiver_data["choice_sha"])
 
         sender_key = self.generate_private_key()
@@ -223,7 +238,9 @@ class SenderSession(BaseSession):
         )
         shared_secret = self.key_exchange(sender_key, receiver_public_key)
 
-        res_dict = self._encrypt_messages(shared_secret, choice_sha, secret_key_len)
+        res_dict["messages"] = self._encrypt_messages(
+            shared_secret, choice_sha, secret_key_len
+        )
         res_dict["sender_public_key"] = sender_public_key_bytes.decode()
 
         return res_dict

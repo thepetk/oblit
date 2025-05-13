@@ -20,10 +20,7 @@ async def sender_server_handler(
         json.dumps(
             {
                 "type": Status.SENDER_READY,
-                "description": {
-                    f"m{i}": f"Message {i}: {m if len(m) < 20 else m[:20] + '...'}"
-                    for i, m in enumerate(messages)
-                },
+                "description": {f"m{i}": f"Message {i}" for i in range(len(messages))},
             }
         )
     )
@@ -50,18 +47,16 @@ async def sender_server_handler(
         result_msg = json.loads(await websocket.recv())
         if result_msg["type"] == Status.RESULT:
             logger.info(f"transfer completed: {result_msg['status']}")
-            click.echo(f"transfer completed: {result_msg['message']}")
 
     else:
         logger.error(f"unexpected message type: {receiver_data_msg['type']}")
 
 
-async def receiver_client_handler(url: "str", choice: "int") -> "None":
+async def receiver_client_handler(url: "str") -> "None":
     """
     receiver's client handler method
     """
     async with websockets.connect(url) as websocket:
-        session = ReceiverSession(choice=choice)
         sender_msg = json.loads(await websocket.recv())
 
         if sender_msg["type"] == Status.SENDER_READY:
@@ -70,30 +65,40 @@ async def receiver_client_handler(url: "str", choice: "int") -> "None":
             click.echo("Available messages:")
             for key in descriptions.keys():
                 click.echo(f"  {descriptions[key]}")
+
+            options = list(range(len(descriptions)))
+            choice = click.prompt(
+                "Which message would you like to receive?",
+                type=click.Choice([str(i) for i in options]),
+                show_choices=True,
+            )
+            choice = int(choice)
+
             click.echo(f"You have chosen message {choice}")
+
+            session = ReceiverSession()
 
             if click.confirm("Do you want to proceed with this choice?", default=True):
                 await websocket.send(
                     json.dumps(
                         {
                             "type": Status.RECEIVER_CHOICE,
-                            "data": session.get_public_data(),
+                            "data": session.get_public_data(choice),
                         }
                     )
                 )
 
                 logger.info(f"Sent choice commitment for message {choice}")
 
-                # Wait for encrypted messages
                 encrypted_msg = json.loads(await websocket.recv())
 
                 if encrypted_msg["type"] == Status.ENCRYPTED_MESSAGES:
-                    # Decrypt the chosen message
                     encrypted_data = encrypted_msg["data"]
-                    decrypted = session.receive_message(encrypted_data)
+                    decrypted_data = session.receive_message(encrypted_data, choice)
 
-                    # Display the decrypted message
-                    click.echo(f"\nReceived message {choice}: {decrypted.decode()}")
+                    click.echo(
+                        f"\nReceived message {choice}: {decrypted_data.decode()}"
+                    )
 
                     # Send result back to sender
                     await websocket.send(

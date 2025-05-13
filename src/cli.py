@@ -39,11 +39,10 @@ def send(messages: "str", host: "str", port: "int") -> "None":
 
 
 @cli.command()
-@click.argument("choice", type=click.Choice(["0", "1"]))
 @click.option("--url", default="ws://localhost:8765", help="WebSocket server URL")
-def receive(choice, url):
+def receive(url: "str") -> "None":
     """
-    connect to sender server and receive messages
+    connect to sender server and receive message according to choice
     """
-    click.echo(f"Connecting to sender at {url} with choice {choice}")
-    asyncio.get_event_loop().run_until_complete(receiver_client_handler(url, choice))
+    click.echo(f"Connecting to sender server at {url}")
+    asyncio.get_event_loop().run_until_complete(receiver_client_handler(url))
