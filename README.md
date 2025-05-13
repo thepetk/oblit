@@ -1,6 +1,6 @@
-# dysi
+# oblit
 
-D.Y.S.I (Did you send it?) is an oblivious transfer protocol written in python. The project has been developed in the context of the Privacy Protection course of Rovira i Virgili University.
+oblit (Oblivious Transfer) is an oblivious transfer protocol CLI tool written in python. The project has been developed in the context of the Privacy Protection course of Rovira i Virgili University.
 
 ## Background
 
