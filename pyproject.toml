@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oblit"
+version = "0.1.0"
+description = "oblit (Oblivious Transfer) is an oblivious transfer protocol CLI written in python"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "asyncio>=3.4.3",
+    "click>=8.2.0",
+    "cryptography>=44.0.3",
+    "websockets>=10.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/thepetk/oblit"
+"Bug Tracker" = "https://github.com/thepetk/oblit/issues"
+
+[project.scripts]
+oblit = "oblit:cli"
