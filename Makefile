@@ -10,3 +10,7 @@ install: ## Installs oblit
 ruff: ## Run ruff for formatting and linting
 	uv run ruff check --fix
 	uv run ruff format
+
+.PHONY: ty
+ty: ## Run type check with ty
+	uvx ty check

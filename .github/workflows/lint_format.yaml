@@ -20,11 +20,11 @@ jobs:
         with:
           python-version: 3.12
 
-      - name: Linting
-        run: uv run ruff check --fix
+      - name: Linting & Formatting
+        run: make ruff
 
-      - name: Formatting
-        run: uv run ruff format
+      - name: Type Check
+        run: make ty
 
       - name: Check if changes required
         run: |

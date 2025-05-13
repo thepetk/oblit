@@ -4,3 +4,13 @@ repos:
     hooks:
       - id: ruff
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: ty
+        name: "Ty type check"
+        language: python
+        types: [python]
+        stages: [pre-commit]
+        entry: uvx ty check
+        description: Run ty type checking on all Python files
