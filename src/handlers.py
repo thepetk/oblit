@@ -53,6 +53,7 @@ def sender_server_handler(sock: "socket.socket", messages: "list[str]") -> "None
     """
     session = SenderSession(messages=messages)
     try:
+        # make the receiver aware of the available messages
         send_socket_message(
             sock,
             {
@@ -67,9 +68,10 @@ def sender_server_handler(sock: "socket.socket", messages: "list[str]") -> "None
             logger.error("Connection closed by receiver")
             return
 
+        # encrypt everything and send over to receiver
         if receiver_data_msg["type"] == Status.RECEIVER_CHOICE:
             receiver_data = receiver_data_msg["data"]
-            encrypted_data = session.send(receiver_data)
+            encrypted_data = session.encrypt_messages(receiver_data)
 
             send_socket_message(
                 sock, {"type": Status.ENCRYPTED_MESSAGES, "data": encrypted_data}
@@ -77,13 +79,13 @@ def sender_server_handler(sock: "socket.socket", messages: "list[str]") -> "None
 
             logger.info("Encrypted messages sent...")
 
+            # check result message
             result_msg = receive_socket_message(sock)
             if not result_msg:
                 logger.error("Connection closed by receiver")
                 return
 
-            logger.info(f"Transfer completed: {result_msg['status']}")
-            click.echo(f"Transfer completed: {result_msg.get('message', 'Success')}")
+            click.echo(f"Transfer completed: {result_msg['status']}")
         else:
             logger.error(f"Unexpected message type: {receiver_data_msg['type']}")
 
@@ -93,14 +95,26 @@ def sender_server_handler(sock: "socket.socket", messages: "list[str]") -> "None
         sock.close()
 
 
+def get_choice(options_range: "int") -> "int":
+    options = list(range(options_range))
+    choice = click.prompt(
+        "Which message would you like to receive?",
+        type=click.Choice([str(i) for i in options]),
+        show_choices=True,
+    )
+    return int(choice)
+
+
 def receiver_client_handler(host: "str", port: "int") -> "None":
     """
-    connects to a socket and receives a message
+    connects to a socket, reads available messages, handles choice
+    and finally receives the chosen message
     """
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((host, port))
 
+        # read available packages
         sender_msg = receive_socket_message(sock)
         if not sender_msg or sender_msg["type"] != Status.SENDER_READY:
             click.echo("Failed to receive message options from sender")
@@ -112,15 +126,10 @@ def receiver_client_handler(host: "str", port: "int") -> "None":
         for key in descriptions.keys():
             click.echo(f"  {descriptions[key]}")
 
-        options = list(range(len(descriptions)))
-        choice = click.prompt(
-            "Which message would you like to receive?",
-            type=click.Choice([str(i) for i in options]),
-            show_choices=True,
-        )
-        choice = int(choice)
-
+        # get receiver's choice
+        choice = get_choice(len(descriptions))
         click.echo(f"You have chosen message {choice}")
+
         session = ReceiverSession()
 
         if click.confirm("Do you want to proceed with this choice?", default=True):
@@ -141,7 +150,7 @@ def receiver_client_handler(host: "str", port: "int") -> "None":
                 return
 
             encrypted_data = encrypted_msg["data"]
-            decrypted_data = session.receive_message(encrypted_data, choice)
+            decrypted_data = session.decrypt_message(encrypted_data, choice)
 
             click.echo(f"\nReceived message {choice}: {decrypted_data.decode()}")
 

@@ -24,12 +24,6 @@ class BaseSession:
     that both approaches are operating with the same cryptographic flow.
     """
 
-    def load_private_key(self, data: "str") -> "ec.EllipticCurvePrivateKey":
-        """
-        loads an elliptic curve private key from a given pem string
-        """
-        return serialization.load_pem_private_key(data.encode(), password=None)
-
     def load_public_key(self, data: "str") -> "ec.EllipticCurvePublicKey":
         """
         loads an elliptic curve private key from a given pem string
@@ -58,7 +52,7 @@ class BaseSession:
         )
         return hkdf.derive(shared_key)
 
-    def encrypt(
+    def encrypt_aes_gcm(
         self, key: "bytes", plaintext: "bytes", nonce_size: "int" = DEFAULT_NONCE_SIZE
     ) -> "dict[str, Any]":
         """
@@ -73,7 +67,7 @@ class BaseSession:
             "nonce": nonce.hex(),
         }
 
-    def decrypt(
+    def decrypt_aes_gcm(
         self,
         key: "bytes",
         encrypted_data: "dict[str, Any]",
@@ -153,7 +147,7 @@ class ReceiverSession(BaseSession):
         except IndexError:
             return {}
 
-    def receive_message(
+    def decrypt_message(
         self, encrypted_data: "dict[str, Any]", choice: "int"
     ) -> "bytes":
         """
@@ -175,7 +169,7 @@ class ReceiverSession(BaseSession):
         salt = self.get_salt(r, choice)
         key = self.derive_key(shared_key=shared_secret, key_salt=salt)
 
-        return self.decrypt(key, enc)
+        return self.decrypt_aes_gcm(key, enc)
 
 
 class SenderSession(BaseSession):
@@ -214,12 +208,12 @@ class SenderSession(BaseSession):
             message, r = m
             salt = hashlib.sha256(choice_sha + r).digest()
             key = self.derive_key(shared_key=shared_secret, key_salt=salt)
-            enc = self.encrypt(key, message.encode("utf-8"))
+            enc = self.encrypt_aes_gcm(key, message.encode("utf-8"))
             res_list.append({"mid": f"m{i}", "msg": enc, "r": r.hex()})
 
         return res_list
 
-    def send(
+    def encrypt_messages(
         self,
         receiver_data: "dict[str, str]",
         secret_key_len=DEFAULT_RANDOM_SECRET_KEY_LENGTH,

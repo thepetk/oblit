@@ -14,7 +14,8 @@ def cli():
 @click.option("-p", "--port", default=8765, type=int, help="Server port")
 def serve(messages: str, host: str, port: int) -> None:
     """
-    open's a socket connection to share the messages with the receiver
+    open's a socket connection to share the messages with the receiver. Messages
+    should be provided as a unified string with a semicolon as a delimiter.
     """
     message_list = messages.split(";")
 
