@@ -1,0 +1,1 @@
+from .oblit import cli
