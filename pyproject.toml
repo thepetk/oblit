@@ -8,12 +8,16 @@ version = "0.1.0"
 description = "oblit (Oblivious Transfer) is an oblivious transfer protocol CLI written in python"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [
-    "asyncio>=3.4.3",
-    "click>=8.2.0",
-    "cryptography>=44.0.3",
-    "websockets>=10.0",
-]
+dependencies = ["click>=8.2.0", "cryptography>=44.0.3"]
+
+[dependency-groups]
+dev = ["ruff>=0.11.2"]
+
+[tool.ruff]
+line-length = 89
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
 
 [project.urls]
 "Homepage" = "https://github.com/thepetk/oblit"
