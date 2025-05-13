@@ -4,16 +4,62 @@ oblit (Oblivious Transfer) is an oblivious transfer protocol CLI tool written in
 
 ## Background
 
-Oblivious Transfer (OT) is a cryptographic primitive that enables secure multiparty computation, privacy-preserving protocols, and secure data exchange. A sender is able to transfer one of many pieces of information to a receiver, without knowing which piece was received, while ensuring the receiver learns nothing about the other pieces. This project explores the implementation of an Oblivious Transfer protocol, using a set of cryptographic techniques to ensure integrity, preserve privacy and not to allow minimal information leakage between participants.
+Oblivious Transfer (OT) is a cryptographic primitive that enables secure multiparty computation, privacy-preserving protocols, and secure data exchange. A sender is able to transfer one of many pieces of information to a receiver, without knowing which piece was received, while ensuring the receiver learns nothing about the other pieces. This project showcases an Oblivious Transfer protocol approach called `oblit`.
 
 ## Installation
 
-TBA
+The project has a straightforward [Makefile](./Makefile) which aims to make its usage and installation easier. That said, all you have to do is:
+
+```bash
+make install
+```
 
 ## Usage
 
-TBA
+`oblit` currently supports two types of commands:
+
+- `serve`: serves the messages that the sender wants to share over a TCP socket connection.
+
+```
+oblit serve --help
+Usage: oblit serve [OPTIONS] MESSAGES
+
+  open's a socket connection to share the messages with the receiver
+
+Options:
+  -h, --host TEXT     Server host
+  -p, --port INTEGER  Server port
+  --help              Show this message and exit.
+```
+
+- `receive`: connects to the same socket, specifies the receiver's choice and then decrypt the given data.
+
+```
+oblit receive --help
+Usage: oblit receive [OPTIONS]
+
+  connect to sender's socket and receive the chosen message
+
+Options:
+  -h, --host TEXT     Server host
+  -p, --port INTEGER  Server port
+  --help              Show this message and exit.
+```
+
+Some examples are:
+
+- Serve messages `message1`, `message2` on `localhost` at port `1000`:
+
+```bash
+oblit serve -h localhost -p 1000 "message1;message2"
+```
+
+- Receive messages from an already existing socket connection on `localhost` at port `1000`:
+
+```bash
+oblit receive -h localhost -p 1000
+```
 
 ## Contribution
 
-The project is under construction, however if you have any questions or suggestions feel free either to create an issue or a pull request. 
+The project is under construction, however if you have any questions or suggestions feel free either to create an issue or a pull request.
