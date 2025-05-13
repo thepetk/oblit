@@ -1,118 +1,165 @@
-import websockets
-import json
+import socket
+import threading
+
 import click
 
-from websockets import WebSocketClientProtocol
-
-from .sessions import SenderSession, ReceiverSession
-from .utils import Status
 from .logger import logger
+from .sessions import ReceiverSession, SenderSession
+from .utils import Status, receive_socket_message, send_socket_message
 
 
-async def sender_server_handler(
-    websocket: "WebSocketClientProtocol", messages: "list[str]"
-) -> "None":
+def sender_server(host: "str", port: "int", messages: "list[str]") -> "None":
     """
-    handles a given sender websocket with a messages list
+    runs a socket, listens for a request and exits once the thread
+    is served.
+    """
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    try:
+        server_socket.bind((host, port))
+        # allows only one connection at a time to prevent
+        # malicious attempts from receiver
+        server_socket.listen(1)
+
+        click.echo(f"Sender listening on {host}:{port}")
+        for i, msg in enumerate(messages):
+            click.echo(f"Message {i}: {msg}")
+
+        while True:
+            receiver_socket, addr = server_socket.accept()
+            click.echo(f"Connection from {addr}")
+
+            # serve the received connection in a thread
+            thread = threading.Thread(
+                target=sender_server_handler, args=(receiver_socket, messages)
+            )
+            thread.daemon = True
+            thread.start()
+            thread.join()
+            break
+
+    except KeyboardInterrupt:
+        click.echo("Server stopped by user")
+    except Exception as e:
+        logger.error(f"Server error: {str(e)}")
+    finally:
+        server_socket.close()
+
+
+def sender_server_handler(sock: "socket.socket", messages: "list[str]") -> "None":
+    """
+    handles a given socket with a messages list
     """
     session = SenderSession(messages=messages)
-    await websocket.send(
-        json.dumps(
+    try:
+        send_socket_message(
+            sock,
             {
                 "type": Status.SENDER_READY,
                 "description": {f"m{i}": f"Message {i}" for i in range(len(messages))},
-            }
-        )
-    )
-
-    logger.info("options sent, waiting for receiver choice...")
-
-    receiver_data_msg = json.loads(await websocket.recv())
-
-    if receiver_data_msg["type"] == Status.RECEIVER_CHOICE:
-        receiver_data = receiver_data_msg["data"]
-        encrypted_data = session.send(receiver_data)
-
-        await websocket.send(
-            json.dumps(
-                {
-                    "type": Status.ENCRYPTED_MESSAGES,
-                    "data": encrypted_data,
-                }
-            )
+            },
         )
 
-        logger.info("encrypted messages sent...")
+        receiver_data_msg = receive_socket_message(sock)
 
-        result_msg = json.loads(await websocket.recv())
-        if result_msg["type"] == Status.RESULT:
-            logger.info(f"transfer completed: {result_msg['status']}")
+        if not receiver_data_msg:
+            logger.error("Connection closed by receiver")
+            return
 
-    else:
-        logger.error(f"unexpected message type: {receiver_data_msg['type']}")
+        if receiver_data_msg["type"] == Status.RECEIVER_CHOICE:
+            receiver_data = receiver_data_msg["data"]
+            encrypted_data = session.send(receiver_data)
 
-
-async def receiver_client_handler(url: "str") -> "None":
-    """
-    receiver's client handler method
-    """
-    async with websockets.connect(url) as websocket:
-        sender_msg = json.loads(await websocket.recv())
-
-        if sender_msg["type"] == Status.SENDER_READY:
-            descriptions: "dict[str, str]" = sender_msg["description"]
-
-            click.echo("Available messages:")
-            for key in descriptions.keys():
-                click.echo(f"  {descriptions[key]}")
-
-            options = list(range(len(descriptions)))
-            choice = click.prompt(
-                "Which message would you like to receive?",
-                type=click.Choice([str(i) for i in options]),
-                show_choices=True,
+            send_socket_message(
+                sock, {"type": Status.ENCRYPTED_MESSAGES, "data": encrypted_data}
             )
-            choice = int(choice)
 
-            click.echo(f"You have chosen message {choice}")
+            logger.info("Encrypted messages sent...")
 
-            session = ReceiverSession()
+            result_msg = receive_socket_message(sock)
+            if not result_msg:
+                logger.error("Connection closed by receiver")
+                return
 
-            if click.confirm("Do you want to proceed with this choice?", default=True):
-                await websocket.send(
-                    json.dumps(
-                        {
-                            "type": Status.RECEIVER_CHOICE,
-                            "data": session.get_public_data(choice),
-                        }
-                    )
-                )
-
-                logger.info(f"Sent choice commitment for message {choice}")
-
-                encrypted_msg = json.loads(await websocket.recv())
-
-                if encrypted_msg["type"] == Status.ENCRYPTED_MESSAGES:
-                    encrypted_data = encrypted_msg["data"]
-                    decrypted_data = session.receive_message(encrypted_data, choice)
-
-                    click.echo(
-                        f"\nReceived message {choice}: {decrypted_data.decode()}"
-                    )
-
-                    # Send result back to sender
-                    await websocket.send(
-                        json.dumps(
-                            {
-                                "type": Status.RESULT,
-                                "status": "success",
-                                "message": f"Successfully received message {choice}",
-                            }
-                        )
-                    )
-                else:
-                    logger.error(f"Unexpected message type: {encrypted_msg['type']}")
-            else:
-                click.echo("Transfer cancelled by user")
+            logger.info(f"Transfer completed: {result_msg['status']}")
+            click.echo(f"Transfer completed: {result_msg.get('message', 'Success')}")
         else:
-            logger.error(f"Unexpected message type: {sender_msg['type']}")
+            logger.error(f"Unexpected message type: {receiver_data_msg['type']}")
+
+    except Exception as e:
+        logger.error(f"Error in sender handler: {str(e)}")
+    finally:
+        sock.close()
+
+
+def receiver_client_handler(host: "str", port: "int") -> "None":
+    """
+    connects to a socket and receives a message
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((host, port))
+
+        sender_msg = receive_socket_message(sock)
+        if not sender_msg or sender_msg["type"] != Status.SENDER_READY:
+            click.echo("Failed to receive message options from sender")
+            return
+
+        descriptions: "dict[str, str]" = sender_msg["description"]
+
+        click.echo("Available messages:")
+        for key in descriptions.keys():
+            click.echo(f"  {descriptions[key]}")
+
+        options = list(range(len(descriptions)))
+        choice = click.prompt(
+            "Which message would you like to receive?",
+            type=click.Choice([str(i) for i in options]),
+            show_choices=True,
+        )
+        choice = int(choice)
+
+        click.echo(f"You have chosen message {choice}")
+        session = ReceiverSession()
+
+        if click.confirm("Do you want to proceed with this choice?", default=True):
+            send_socket_message(
+                sock,
+                {
+                    "type": Status.RECEIVER_CHOICE,
+                    "data": session.get_public_data(choice),
+                },
+            )
+
+            logger.info(f"Sent choice commitment for message {choice}")
+
+            encrypted_msg = receive_socket_message(sock)
+
+            if not encrypted_msg or encrypted_msg["type"] != Status.ENCRYPTED_MESSAGES:
+                click.echo("Failed to receive encrypted messages from sender")
+                return
+
+            encrypted_data = encrypted_msg["data"]
+            decrypted_data = session.receive_message(encrypted_data, choice)
+
+            click.echo(f"\nReceived message {choice}: {decrypted_data.decode()}")
+
+            send_socket_message(
+                sock,
+                {
+                    "type": Status.RESULT,
+                    "status": "success",
+                    "message": f"Successfully received message {choice}",
+                },
+            )
+
+            click.echo("Transaction completed successfully")
+        else:
+            click.echo("Transfer cancelled by user")
+    except ConnectionRefusedError:
+        click.echo(f"Could not connect to sender at {host}:{port}")
+    except Exception as e:
+        logger.error(f"Error in receiver client: {str(e)}")
+    finally:
+        sock.close()

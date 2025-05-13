@@ -1,8 +1,6 @@
-import sys
 import click
-import asyncio
-from .handlers import receiver_client_handler, sender_server_handler
-import websockets
+
+from .handlers import receiver_client_handler, sender_server
 
 
 @click.group()
@@ -12,11 +10,11 @@ def cli():
 
 @cli.command()
 @click.argument("messages", required=True, type=str)
-@click.option("-h", "--host", default="localhost", help="WebSocket server host")
-@click.option("-p", "--port", default=8765, type=int, help="WebSocket server port")
-def send(messages: "str", host: "str", port: "int") -> "None":
+@click.option("-h", "--host", default="localhost", help="Server host")
+@click.option("-p", "--port", default=8765, type=int, help="Server port")
+def serve(messages: str, host: str, port: int) -> None:
     """
-    start sender server and await for potential receivers
+    open's a socket connection to share the messages with the receiver
     """
     message_list = messages.split(";")
 
@@ -24,25 +22,16 @@ def send(messages: "str", host: "str", port: "int") -> "None":
         click.echo(
             "Error: At least two messages must be provided, separated by semicolons"
         )
-        sys.exit(1)
-
-    start_server = websockets.serve(
-        lambda ws: sender_server_handler(ws, message_list), host, port
-    )
-
-    click.echo(f"Sender listening on ws://{host}:{port}")
-    for i, msg in enumerate(message_list):
-        click.echo(f"Message {i}: {msg}")
-
-    asyncio.get_event_loop().run_until_complete(start_server)
-    asyncio.get_event_loop().run_forever()
+    else:
+        sender_server(host, port, message_list)
 
 
 @cli.command()
-@click.option("--url", default="ws://localhost:8765", help="WebSocket server URL")
-def receive(url: "str") -> "None":
+@click.option("-h", "--host", default="localhost", help="Server host")
+@click.option("-p", "--port", default=8765, type=int, help="Server port")
+def receive(host: "str", port: "int") -> "None":
     """
-    connect to sender server and receive message according to choice
+    connect to sender's socket and receive the chosen message
     """
-    click.echo(f"Connecting to sender server at {url}")
-    asyncio.get_event_loop().run_until_complete(receiver_client_handler(url))
+    click.echo(f"Connecting to sender at {host}:{port}")
+    receiver_client_handler(host, port)
