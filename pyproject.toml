@@ -21,3 +21,7 @@ dependencies = [
 
 [project.scripts]
 oblit = "oblit:cli"
+
+[tool.setuptools]
+packages = ["oblit"]
+package-dir = { "oblit" = "src" }

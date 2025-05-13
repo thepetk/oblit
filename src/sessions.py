@@ -1,63 +1,19 @@
-import sys
 from typing import Any
-import click
-import json
 import os
 import secrets
 import hashlib
-import asyncio
-import websockets
-import logging
-from enum import Enum
+from .constants import (
+    DEFAULT_HKDF_SALT,
+    DEFAULT_HKDF_SYMMETRIC_KEY_LENGTH,
+    DEFAULT_ECC_CURVE,
+    DEFAULT_NONCE_SIZE,
+    DEFAULT_RANDOM_SECRET_KEY_LENGTH,
+)
 
-from websockets import WebSocketClientProtocol
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-# --------------- Constants ----------------------- #
-
-# DEFAULT_ECC_CURVE: The curve type used for elliptic curve cryptography
-DEFAULT_ECC_CURVE = ec.SECP521R1()
-
-# DEFAULT_HKDF_SYMMETRIC_KEY_LENGTH: The length of the symmetric key
-DEFAULT_HKDF_SYMMETRIC_KEY_LENGTH = 32
-
-# DEFAULT_NONCE_SIZE: The nonce size used for AES-GCM
-DEFAULT_NONCE_SIZE = 12
-
-# DEFAULT_HKDF_SALT: Salt used for key derivation
-DEFAULT_HKDF_SALT = os.getenv("DEFAULT_HKDF_SALT", "").encode("utf-8")
-
-# DEFAULT_RANDOM_SECRET_KEY_LENGTH: length of secret key used to create
-# the choice digest.
-DEFAULT_RANDOM_SECRET_KEY_LENGTH = 32
-
-# --------------- Logger -------------------------- #
-
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger("dysi")
-
-# --------------- Helper Classes ------------------ #
-
-
-class Status:
-    """
-    status class captures the actual status of the
-    communication between sender and receiver
-    """
-
-    SENDER_READY = "sender_ready"
-    RECEIVER_CHOICE = "receiver_choice"
-    ENCRYPTED_MESSAGES = "encrypted_messages"
-    RESULT = "result"
-    ERROR = "error"
-
-
-# ----------------- Utils ---------------------------- #
 
 
 class BaseSession:
@@ -271,161 +227,3 @@ class SenderSession(BaseSession):
         res_dict["sender_public_key"] = sender_public_key_bytes.decode()
 
         return res_dict
-
-
-# ------------- Web Socket Helpers ------------------- #
-
-
-async def sender_server_handler(
-    websocket: "WebSocketClientProtocol", messages: "list[str]"
-) -> "None":
-    """
-    handles a given sender websocket with a messages list
-    """
-    session = SenderSession(messages=messages)
-    await websocket.send(
-        json.dumps(
-            {
-                "type": Status.SENDER_READY,
-                "description": {
-                    f"m{i}": f"Message {i}: {m if len(m) < 20 else m[:20] + '...'}"
-                    for i, m in enumerate(messages)
-                },
-            }
-        )
-    )
-
-    logger.info("options sent, waiting for receiver choice...")
-
-    receiver_data_msg = json.loads(await websocket.recv())
-
-    if receiver_data_msg["type"] == Status.RECEIVER_CHOICE:
-        receiver_data = receiver_data_msg["data"]
-        encrypted_data = session.send(receiver_data)
-
-        await websocket.send(
-            json.dumps(
-                {
-                    "type": Status.ENCRYPTED_MESSAGES,
-                    "data": encrypted_data,
-                }
-            )
-        )
-
-        logger.info("encrypted messages sent...")
-
-        result_msg = json.loads(await websocket.recv())
-        if result_msg["type"] == Status.RESULT:
-            logger.info(f"transfer completed: {result_msg['status']}")
-            click.echo(f"transfer completed: {result_msg['message']}")
-
-    else:
-        logger.error(f"unexpected message type: {receiver_data_msg['type']}")
-
-
-async def receiver_client_handler(url: "str", choice: "int") -> "None":
-    """
-    receiver's client handler method
-    """
-    async with websockets.connect(url) as websocket:
-        session = ReceiverSession(choice=choice)
-        sender_msg = json.loads(await websocket.recv())
-
-        if sender_msg["type"] == Status.SENDER_READY:
-            descriptions: "dict[str, str]" = sender_msg["description"]
-
-            click.echo("Available messages:")
-            for key in descriptions.keys():
-                click.echo(f"  {descriptions[key]}")
-            click.echo(f"You have chosen message {choice}")
-
-            if click.confirm("Do you want to proceed with this choice?", default=True):
-                await websocket.send(
-                    json.dumps(
-                        {
-                            "type": Status.RECEIVER_CHOICE,
-                            "data": session.get_public_data(),
-                        }
-                    )
-                )
-
-                logger.info(f"Sent choice commitment for message {choice}")
-
-                # Wait for encrypted messages
-                encrypted_msg = json.loads(await websocket.recv())
-
-                if encrypted_msg["type"] == Status.ENCRYPTED_MESSAGES:
-                    # Decrypt the chosen message
-                    encrypted_data = encrypted_msg["data"]
-                    decrypted = session.receive_message(encrypted_data)
-
-                    # Display the decrypted message
-                    click.echo(f"\nReceived message {choice}: {decrypted.decode()}")
-
-                    # Send result back to sender
-                    await websocket.send(
-                        json.dumps(
-                            {
-                                "type": Status.RESULT,
-                                "status": "success",
-                                "message": f"Successfully received message {choice}",
-                            }
-                        )
-                    )
-                else:
-                    logger.error(f"Unexpected message type: {encrypted_msg['type']}")
-            else:
-                click.echo("Transfer cancelled by user")
-        else:
-            logger.error(f"Unexpected message type: {sender_msg['type']}")
-
-
-# -------------------- CLI --------------------------- #
-
-
-@click.group()
-def cli():
-    pass
-
-
-@cli.command()
-@click.argument("messages", required=True, type=str)
-@click.option("-h", "--host", default="localhost", help="WebSocket server host")
-@click.option("-p", "--port", default=8765, type=int, help="WebSocket server port")
-def send(messages: "str", host: "str", port: "int") -> "None":
-    """
-    start sender server and await for potential receivers
-    """
-    message_list = messages.split(";")
-
-    if len(message_list) < 2:
-        click.echo(
-            "Error: At least two messages must be provided, separated by semicolons"
-        )
-        sys.exit(1)
-
-    start_server = websockets.serve(
-        lambda ws: sender_server_handler(ws, message_list), host, port
-    )
-
-    click.echo(f"Sender listening on ws://{host}:{port}")
-    for i, msg in enumerate(message_list):
-        click.echo(f"Message {i}: {msg}")
-
-    asyncio.get_event_loop().run_until_complete(start_server)
-    asyncio.get_event_loop().run_forever()
-
-
-@cli.command()
-@click.argument("choice", type=click.Choice(["0", "1"]))
-@click.option("--url", default="ws://localhost:8765", help="WebSocket server URL")
-def receive(choice, url):
-    """
-    connect to sender server and receive messages
-    """
-    click.echo(f"Connecting to sender at {url} with choice {choice}")
-    asyncio.get_event_loop().run_until_complete(receiver_client_handler(url, choice))
-
-
-if __name__ == "__main__":
-    cli()
