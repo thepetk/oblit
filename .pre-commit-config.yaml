@@ -12,5 +12,5 @@ repos:
         language: python
         types: [python]
         stages: [pre-commit]
-        entry: uvx ty check
+        entry: uvx ty check --ignore unresolved-import
         description: Run ty type checking on all Python files

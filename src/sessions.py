@@ -154,7 +154,7 @@ class ReceiverSession(BaseSession):
             return {}
 
     def receive_message(
-        self, encrypted_data: "dict[str | Any]", choice: "int"
+        self, encrypted_data: "dict[str, Any]", choice: "int"
     ) -> "bytes":
         """
         decrypts the chosen message, after loading the public key,
@@ -166,7 +166,7 @@ class ReceiverSession(BaseSession):
         m_dict = self.select_message(encrypted_data["messages"], choice)
 
         if not m_dict:
-            return ""
+            return b""
 
         r = self._get_r(m_dict["r"])
         enc = m_dict["msg"]

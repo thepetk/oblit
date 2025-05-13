@@ -40,7 +40,7 @@ def receive_socket_message(
 
     length_bytes = sock.recv(length_pref)
     if not length_bytes:
-        return None
+        return {}
 
     message_length = int.from_bytes(length_bytes, byteorder="big")
 
@@ -50,7 +50,7 @@ def receive_socket_message(
     while bytes_received < message_length:
         chunk = sock.recv(min(buf_size, message_length - bytes_received))
         if not chunk:
-            return None
+            return {}
         chunks.append(chunk)
         bytes_received += len(chunk)
 
