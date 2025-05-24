@@ -4,7 +4,7 @@ oblit (Oblivious Transfer) is an oblivious transfer protocol CLI tool written in
 
 ## Background
 
-Oblivious Transfer (OT) is a cryptographic primitive that enables secure multiparty computation, privacy-preserving protocols, and secure data exchange. A sender is able to transfer one of many pieces of information to a receiver, without knowing which piece was received, while ensuring the receiver learns nothing about the other pieces. This project showcases an Oblivious Transfer protocol approach called `oblit`.
+Oblivious Transfer (OT) is a cryptographic primitive that ensures secure communication and data-exchange between two parties. A sender is able to transfer one of many pieces of information to a receiver, without knowing which piece was received, while ensuring the receiver learns nothing about the other pieces. This project showcases an Oblivious Transfer protocol approach called `oblit`.
 
 ## Installation
 
