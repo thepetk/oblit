@@ -62,8 +62,10 @@ def sender_server_handler(sock: "socket.socket", messages: "list[str]") -> "None
                 "message_count": len(messages),
             },
         )
+        click.echo("Public keys sent to receiver")
 
         # get the key from the receiver
+        click.echo("Receiving symmetric key from receiver")
         receiver_data_msg = receive_socket_message(sock)
         if not receiver_data_msg or receiver_data_msg["type"] != Status.RECEIVER_CHOICE:
             logger.error("Connection closed by receiver")
@@ -72,13 +74,14 @@ def sender_server_handler(sock: "socket.socket", messages: "list[str]") -> "None
         # encrypt everything and send over to receiver
         if receiver_data_msg["type"] == Status.RECEIVER_CHOICE:
             receiver_data = receiver_data_msg["data"]
+            click.echo("Attempting to decrypt the symmetric key with all private keys")
             encrypted_data = session.encrypt_messages(receiver_data)
-
+            click.echo("Sending encrypted messages")
             send_socket_message(
                 sock, {"type": Status.ENCRYPTED_MESSAGES, "data": encrypted_data}
             )
 
-            logger.info("Encrypted messages sent...")
+            click.echo("Encrypted messages sent")
 
             # receive confirmation
             result_msg = receive_socket_message(sock)
@@ -124,7 +127,7 @@ def receiver_client_handler(host: "str", port: "int") -> "None":
         public_keys = sender_msg["public_keys"]
         message_count = sender_msg.get("message_count", 2)
 
-        click.echo(f"Available messages: 0 to {message_count - 1}")
+        click.echo(f"Received Public Keys. Available messages: 0 to {message_count - 1}")
         choice = get_choice(message_count)
 
         session = ReceiverSession()
@@ -139,7 +142,7 @@ def receiver_client_handler(host: "str", port: "int") -> "None":
                 },
             )
 
-            logger.info(f"Sent encrypted symmetric key for message {choice}")
+            click.echo(f"Sent encrypted symmetric key for message {choice}")
 
             # get all encrypted messages
             encrypted_msg = receive_socket_message(sock)

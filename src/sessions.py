@@ -65,7 +65,7 @@ class ReceiverSession:
 
         # converts symmetric_key into bytes, then encrypt and
         # then prepare it for transfer
-        chosen_pk = self.sender_public_keys[f"pk{choice + 1}"]
+        chosen_pk = self.sender_public_keys[f"k{choice + 1}"]
         symmetric_key_bytes = self.symmetric_key.to_bytes(
             self.symmetric_key_bytes_size, "big"
         )
@@ -138,7 +138,7 @@ class SenderSession:
         modulus and the public exponent
         """
         return {
-            f"p{key_name}": {
+            key_name: {
                 "n": str(self.public_keys[key_name].public_numbers().n),
                 "e": str(self.public_keys[key_name].public_numbers().e),
             }
@@ -153,26 +153,28 @@ class SenderSession:
         """
         modulus_bits = private_key.key_size
         ciphertext_bytes = ciphertext_int.to_bytes((modulus_bits + 7) // 8, "big")
-
-        decrypted_bytes = private_key.decrypt(
-            ciphertext_bytes,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None,
-            ),
-        )
-        return int.from_bytes(decrypted_bytes, "big")
+        try:
+            decrypted_bytes = private_key.decrypt(
+                ciphertext_bytes,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
+            return int.from_bytes(decrypted_bytes, "big")
+        # for all other messages fallback in random key
+        except Exception:
+            return random.randrange(10**99, 10**100)
 
     def encrypt_messages(self, receiver_data: "dict[str, str]") -> "dict[str, str]":
         """
         encrypts all messages based on receiver's encrypted choice
         """
         encrypted_k = int(receiver_data["encrypted_k"])
-
         encrypted_data: "dict[str, str]" = {}
-        idx = 0
-        for pk_name in self.private_keys.keys():
+
+        for idx, pk_name in enumerate(self.private_keys.keys()):
             k = self._decrypt_with_private_key(self.private_keys[pk_name], encrypted_k)
             c = self._symmetric_encrypt(self.messages[idx].encode(), k)
             encrypted_data[f"c{idx + 1}"] = c.hex()

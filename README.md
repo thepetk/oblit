@@ -18,7 +18,7 @@ make install
 
 `oblit` currently supports two types of commands:
 
-- `serve`: serves the messages that the sender wants to share over a TCP socket connection.
+- `serve`: serves the messages that the sender wants to share over a socket connection.
 
 ```
 oblit serve --help

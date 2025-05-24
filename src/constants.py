@@ -10,7 +10,7 @@ DEFAULT_BUF_SIZE = int(os.getenv("DEFAULT_BUF_SIZE", 4096))
 DEFAULT_LENGTH_PREF = int(os.getenv("DEFAULT_LENGTH_PREF", 4))
 
 # DEFAULT_KEY_SIZE: The default size of key k
-DEFAULT_KEY_SIZE = int(os.getenv("DEFAULT_KEY_SIZE", 3072))
+DEFAULT_KEY_SIZE = int(os.getenv("DEFAULT_KEY_SIZE", 2048))
 
 # DEFAULT_KEY_BYTES_SIZE: The default bytes size of symmetric key
-DEFAULT_KEY_BYTES_SIZE = int(os.getenv("DEFAULT_KEY_BYTES_SIZE", 128))
+DEFAULT_KEY_BYTES_SIZE = int(os.getenv("DEFAULT_KEY_BYTES_SIZE", 42))
