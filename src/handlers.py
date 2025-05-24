@@ -10,8 +10,8 @@ from .utils import Status, receive_socket_message, send_socket_message
 
 def sender_server(host: "str", port: "int", messages: "list[str]") -> "None":
     """
-    runs a socket, listens for a request and exits once the thread
-    is served.
+    the server is responsible in serving the keys and messages that
+    the sender makes available and the receiver will choose to decrypt
     """
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -53,18 +53,19 @@ def sender_server_handler(sock: "socket.socket", messages: "list[str]") -> "None
     """
     session = SenderSession(messages=messages)
     try:
-        # make the receiver aware of the available messages
+        # make the receiver aware of the available public keys
         send_socket_message(
             sock,
             {
                 "type": Status.SENDER_READY,
-                "description": {f"m{i}": f"Message {i}" for i in range(len(messages))},
+                "public_keys": session.get_public_keys(),
+                "message_count": len(messages),
             },
         )
 
+        # get the key from the receiver
         receiver_data_msg = receive_socket_message(sock)
-
-        if not receiver_data_msg:
+        if not receiver_data_msg or receiver_data_msg["type"] != Status.RECEIVER_CHOICE:
             logger.error("Connection closed by receiver")
             return
 
@@ -79,7 +80,7 @@ def sender_server_handler(sock: "socket.socket", messages: "list[str]") -> "None
 
             logger.info("Encrypted messages sent...")
 
-            # check result message
+            # receive confirmation
             result_msg = receive_socket_message(sock)
             if not result_msg:
                 logger.error("Connection closed by receiver")
@@ -107,8 +108,8 @@ def get_choice(options_range: "int") -> "int":
 
 def receiver_client_handler(host: "str", port: "int") -> "None":
     """
-    connects to a socket, reads available messages, handles choice
-    and finally receives the chosen message
+    client takes care of all the receiver functionality, receiving public keys,
+    choosing the message, encrypting the choice, and finally decrypting result
     """
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -120,17 +121,14 @@ def receiver_client_handler(host: "str", port: "int") -> "None":
             click.echo("Failed to receive message options from sender")
             return
 
-        descriptions: "dict[str, str]" = sender_msg["description"]
+        public_keys = sender_msg["public_keys"]
+        message_count = sender_msg.get("message_count", 2)
 
-        click.echo("Available messages:")
-        for key in descriptions.keys():
-            click.echo(f"  {descriptions[key]}")
-
-        # get receiver's choice
-        choice = get_choice(len(descriptions))
-        click.echo(f"You have chosen message {choice}")
+        click.echo(f"Available messages: 0 to {message_count - 1}")
+        choice = get_choice(message_count)
 
         session = ReceiverSession()
+        session.set_public_keys(public_keys)
 
         if click.confirm("Do you want to proceed with this choice?", default=True):
             send_socket_message(
@@ -141,8 +139,9 @@ def receiver_client_handler(host: "str", port: "int") -> "None":
                 },
             )
 
-            logger.info(f"Sent choice commitment for message {choice}")
+            logger.info(f"Sent encrypted symmetric key for message {choice}")
 
+            # get all encrypted messages
             encrypted_msg = receive_socket_message(sock)
 
             if not encrypted_msg or encrypted_msg["type"] != Status.ENCRYPTED_MESSAGES:

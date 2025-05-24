@@ -1,240 +1,192 @@
-import hashlib
 import os
-import secrets
+import random
 from typing import Any
 
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from .constants import (
-    DEFAULT_ECC_CURVE,
-    DEFAULT_HKDF_SALT,
-    DEFAULT_HKDF_SYMMETRIC_KEY_LENGTH,
+    DEFAULT_KEY_BYTES_SIZE,
+    DEFAULT_KEY_SIZE,
     DEFAULT_NONCE_SIZE,
-    DEFAULT_RANDOM_SECRET_KEY_LENGTH,
 )
 
 
-class BaseSession:
+class ReceiverSession:
     """
-    the base session class provides all tools required for the sender
-    and the receiver sessions. Mostly focuses on cryptographic, ensuring
-    that both approaches are operating with the same cryptographic flow.
+    responsible to handle the receiver's session.
+
+    uses public key cryptography with arbitrary precision integers
+    to implement oblivious transfer.
     """
 
-    def load_public_key(self, data: "str") -> "ec.EllipticCurvePublicKey":
-        """
-        loads an elliptic curve private key from a given pem string
-        """
-        return serialization.load_pem_public_key(data.encode())
-
-    def generate_private_key(
-        self, curve=DEFAULT_ECC_CURVE
-    ) -> "ec.EllipticCurvePrivateKey":
-        """
-        generates an eliptic curve private key for a give curve type.
-        """
-        return ec.generate_private_key(curve=curve)
-
-    def derive_key(
+    def __init__(
         self,
-        shared_key: "bytes",
-        key_length: "int" = DEFAULT_HKDF_SYMMETRIC_KEY_LENGTH,
-        key_salt: "bytes" = DEFAULT_HKDF_SALT,
-    ) -> "bytes":
-        """
-        derives a symmetric key using HKDF
-        """
-        hkdf = HKDF(
-            algorithm=hashes.SHA256(), length=key_length, salt=key_salt, info=None
+        key_size=DEFAULT_KEY_SIZE,
+        symmetric_key_bytes_size=DEFAULT_KEY_BYTES_SIZE,
+        nonce_size=DEFAULT_NONCE_SIZE,
+    ) -> "None":
+        self.key_size = key_size
+        self.symmetric_key_bytes_size = symmetric_key_bytes_size
+        self.symmetric_key = None
+        self.chosen_message_index = None
+        self.sender_public_keys = None
+        self.nonce_size = nonce_size
+
+    def _reconstruct_pk(
+        self, public_keys_data: "dict[str, Any]", key_name: "str"
+    ) -> "rsa.RSAPublicNumbers":
+        return rsa.RSAPublicNumbers(
+            e=int(public_keys_data[key_name]["e"]),
+            n=int(public_keys_data[key_name]["n"]),
         )
-        return hkdf.derive(shared_key)
 
-    def encrypt_aes_gcm(
-        self, key: "bytes", plaintext: "bytes", nonce_size: "int" = DEFAULT_NONCE_SIZE
-    ) -> "dict[str, Any]":
+    def set_public_keys(self, public_keys_data: "dict[str, Any]") -> "None":
         """
-        encrypts a given plaintext using AES-GCM and a given key
+        stores sender's public keys
         """
-        aes_gcm = AESGCM(key)
-        nonce = os.urandom(nonce_size)
-        ciphertext: "bytes" = aes_gcm.encrypt(nonce, plaintext, associated_data=None)
-
-        return {
-            "ciphertext": ciphertext.hex(),
-            "nonce": nonce.hex(),
+        self.sender_public_keys = {
+            key_name: self._reconstruct_pk(public_keys_data, key_name).public_key(
+                default_backend()
+            )
+            for key_name in public_keys_data.keys()
         }
-
-    def decrypt_aes_gcm(
-        self,
-        key: "bytes",
-        encrypted_data: "dict[str, Any]",
-    ) -> "bytes":
-        """
-        decrypts a given AES-GCM ciphertext and key
-        """
-        aesgcm = AESGCM(key)
-        nonce = bytes.fromhex(encrypted_data["nonce"])
-        ciphertext = bytes.fromhex(encrypted_data["ciphertext"])
-
-        return aesgcm.decrypt(nonce, ciphertext, associated_data=None)
-
-    def key_exchange(
-        self,
-        private_key: "ec.EllipticCurvePrivateKey",
-        public_key: "ec.EllipticCurvePublicKey",
-    ) -> "bytes":
-        """
-        performs key exchange using ECDH
-        """
-        return private_key.exchange(ec.ECDH(), public_key)
-
-
-class ReceiverSession(BaseSession):
-    """
-    responsible to handle the receiver's session, fulfilling
-    the OT protocol.
-
-    The mechanism behind the scenes that binds the receiver
-    to their choice is the choice digest which is share with
-    the sender. The digest is the result of the sha256 function
-    using a universally random secret key
-    """
-
-    def __init__(self, secret_key_len=DEFAULT_RANDOM_SECRET_KEY_LENGTH) -> "None":
-        self.receiver_key = self.generate_private_key()
-        self.secret_key = secrets.token_bytes(secret_key_len)
-        self.public_key_bytes = self.receiver_key.public_key().public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
-
-    def get_choice_sha(self, choice: "int") -> "bytes":
-        return hashlib.sha256(self.secret_key + bytes([choice])).digest()
-
-    def _get_r(self, enc: "str") -> "bytes":
-        """
-        retrieve the random values used during encryption
-        """
-
-        return bytes.fromhex(enc)
 
     def get_public_data(self, choice: "int") -> "dict[str, str]":
         """
-        returns pub key and the choice digest
+        generates and encrypts symmetric key based on choice
         """
-        return {
-            "public_key": self.public_key_bytes.decode(),
-            "choice_sha": self.get_choice_sha(choice).hex(),
-        }
+        self.chosen_message_index = choice
 
-    def get_salt(self, r: "str", choice: "int") -> "bytes":
-        """
-        generates the salt used for choice
-        """
-        return hashlib.sha256(self.get_choice_sha(choice) + r).digest()
+        # Note: generate large random symmetric key more than 100 digits
+        self.symmetric_key = random.randrange(10**99, 10**100)
 
-    def select_message(
-        self, messages: "list[dict[str, str]]", choice: "int"
-    ) -> "dict[str, str]":
-        """
-        selects the message from a list of given msg structures
-        """
-        try:
-            return [m for m in messages if m["mid"] == f"m{choice}"][0]
-        except IndexError:
-            return {}
+        # converts symmetric_key into bytes, then encrypt and
+        # then prepare it for transfer
+        chosen_pk = self.sender_public_keys[f"pk{choice + 1}"]
+        symmetric_key_bytes = self.symmetric_key.to_bytes(
+            self.symmetric_key_bytes_size, "big"
+        )
+        encrypted_k_bytes = chosen_pk.encrypt(
+            symmetric_key_bytes,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+        encrypted_k_int = int.from_bytes(encrypted_k_bytes, "big")
+
+        return {"encrypted_k": str(encrypted_k_int)}
 
     def decrypt_message(
         self, encrypted_data: "dict[str, Any]", choice: "int"
     ) -> "bytes":
         """
-        decrypts the chosen message, after loading the public key,
-        exchanging the shared secret and decide which message will
-        be decrypted.
+        decrypts the chosen message using RSA protocol and the
+        symmetric key of the session
         """
-        sender_public_key = self.load_public_key(encrypted_data["sender_public_key"])
+        ciphertext = bytes.fromhex(encrypted_data[f"c{choice + 1}"])
+        return self._symmetric_decrypt(ciphertext, self.symmetric_key)
 
-        m_dict = self.select_message(encrypted_data["messages"], choice)
+    def _symmetric_decrypt(self, ciphertext: "bytes", key: "int") -> "bytes":
+        """
+        symmetric decryption with AES-GCM
+        """
+        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+        digest.update(str(key).encode())
 
-        if not m_dict:
-            return b""
+        aes_key = digest.finalize()[:32]
+        nonce = ciphertext[: self.nonce_size]
+        encrypted_data = ciphertext[self.nonce_size :]
 
-        r = self._get_r(m_dict["r"])
-        enc = m_dict["msg"]
-
-        shared_secret = self.key_exchange(self.receiver_key, sender_public_key)
-        salt = self.get_salt(r, choice)
-        key = self.derive_key(shared_key=shared_secret, key_salt=salt)
-
-        return self.decrypt_aes_gcm(key, enc)
+        aesgcm = AESGCM(aes_key)
+        return aesgcm.decrypt(nonce, encrypted_data, None)
 
 
-class SenderSession(BaseSession):
+class SenderSession:
     """
     responsible to handle the sender's session, fulfilling
-    the OT protocol.
-
-    The mechanism behind the scenes is a simple encryption
-    mechanism that encrypts all messages in a specific
-    way.
+    the OT protocol with arbitrary precision integers.
     """
 
-    def __init__(self, messages: "list[str]"):
-        self.messages = messages
-
-    def get_messages_list(self, secret_key_len: "int") -> "list[tuple[str, bytes]]":
-        """
-        drafts a list of tuples containing the message
-        and a random string.
-        """
-        return [
-            (message, secrets.token_bytes(secret_key_len)) for message in self.messages
-        ]
-
-    def _encrypt_messages(
-        self, shared_secret: "str", choice_sha: "str", secret_key_len: "int"
-    ) -> "list[dict[str, str]]":
-        """
-        encrypts every message and returns a list of dict matching
-        each message with a random hex r.
-        """
-        res_list = []
-        messages_list = self.get_messages_list(secret_key_len)
-
-        for i, m in enumerate(messages_list):
-            message, r = m
-            salt = hashlib.sha256(choice_sha + r).digest()
-            key = self.derive_key(shared_key=shared_secret, key_salt=salt)
-            enc = self.encrypt_aes_gcm(key, message.encode("utf-8"))
-            res_list.append({"mid": f"m{i}", "msg": enc, "r": r.hex()})
-
-        return res_list
-
-    def encrypt_messages(
+    def __init__(
         self,
-        receiver_data: "dict[str, str]",
-        secret_key_len=DEFAULT_RANDOM_SECRET_KEY_LENGTH,
-    ) -> "dict[str, Any]":
+        messages: "list[str]",
+        key_size=DEFAULT_KEY_SIZE,
+        nonce_size=DEFAULT_NONCE_SIZE,
+    ) -> "None":
+        self.messages = messages
+        self.key_size = key_size
+        self.private_keys = {
+            f"k{idx + 1}": rsa.generate_private_key(
+                public_exponent=65537, key_size=self.key_size, backend=default_backend()
+            )
+            for idx in range(len(self.messages))
+        }
+        self.public_keys: "dict[str, rsa.RSAPublicKey]" = {
+            f"k{idx + 1}": self.private_keys[f"k{idx + 1}"].public_key()
+            for idx in range(len(self.messages))
+        }
+        self.nonce_size = nonce_size
+
+    def get_public_keys(self) -> "dict[str, str]":
         """
-        prepares all messages according to the OT protocol
+        returns all public keys in dictionary format including the
+        modulus and the public exponent
         """
-        res_dict = {}
-        receiver_public_key = self.load_public_key(receiver_data["public_key"])
-        choice_sha = bytes.fromhex(receiver_data["choice_sha"])
+        return {
+            f"p{key_name}": {
+                "n": str(self.public_keys[key_name].public_numbers().n),
+                "e": str(self.public_keys[key_name].public_numbers().e),
+            }
+            for key_name in self.public_keys.keys()
+        }
 
-        sender_key = self.generate_private_key()
-        sender_public_key_bytes = sender_key.public_key().public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    def _decrypt_with_private_key(
+        self, private_key: "rsa.RSAPrivateKey", ciphertext_int: "int"
+    ) -> "int":
+        """
+        RSA decryption using the given private key
+        """
+        modulus_bits = private_key.key_size
+        ciphertext_bytes = ciphertext_int.to_bytes((modulus_bits + 7) // 8, "big")
+
+        decrypted_bytes = private_key.decrypt(
+            ciphertext_bytes,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
         )
-        shared_secret = self.key_exchange(sender_key, receiver_public_key)
+        return int.from_bytes(decrypted_bytes, "big")
 
-        res_dict["messages"] = self._encrypt_messages(
-            shared_secret, choice_sha, secret_key_len
-        )
-        res_dict["sender_public_key"] = sender_public_key_bytes.decode()
+    def encrypt_messages(self, receiver_data: "dict[str, str]") -> "dict[str, str]":
+        """
+        encrypts all messages based on receiver's encrypted choice
+        """
+        encrypted_k = int(receiver_data["encrypted_k"])
 
-        return res_dict
+        encrypted_data: "dict[str, str]" = {}
+        idx = 0
+        for pk_name in self.private_keys.keys():
+            k = self._decrypt_with_private_key(self.private_keys[pk_name], encrypted_k)
+            c = self._symmetric_encrypt(self.messages[idx].encode(), k)
+            encrypted_data[f"c{idx + 1}"] = c.hex()
+
+        return encrypted_data
+
+    def _symmetric_encrypt(self, message: "bytes", key: "int") -> "bytes":
+        """
+        uses AES-GCM to encrypt symmetrically
+        """
+        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+        digest.update(str(key).encode())
+        aes_key = digest.finalize()[:32]
+        nonce = os.urandom(self.nonce_size)
+        aesgcm = AESGCM(aes_key)
+        ciphertext: "bytes" = aesgcm.encrypt(nonce, message, None)
+        return nonce + ciphertext
