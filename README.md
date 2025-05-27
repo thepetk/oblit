@@ -6,6 +6,8 @@ oblit (Oblivious Transfer) is an oblivious transfer protocol CLI tool written in
 
 Oblivious Transfer (OT) is a cryptographic primitive that ensures secure communication and data-exchange between two parties. A sender is able to transfer one of many pieces of information to a receiver, without knowing which piece was received, while ensuring the receiver learns nothing about the other pieces. This project showcases an Oblivious Transfer protocol approach called `oblit`.
 
+`oblit` uses a hybrid scheme for encryption. First, it utilizes RSA for the choice of the message (exchange of public keys and the choice of public key). Then, it uses AES-GCM to encrypt the messages sent from sender to the receiver.
+
 ## Installation
 
 The project has a straightforward [Makefile](./Makefile) which aims to make its usage and installation easier. That said, all you have to do is:
